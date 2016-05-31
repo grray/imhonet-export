@@ -1,0 +1,10 @@
+[package]
+name = "imhonet_export"
+version = "0.0.1"
+authors = [ "Your name <you@example.com>" ]
+
+[dependencies]
+curl = "^0.2.18"
+rustc-serialize = "0.3"
+log = "0.3"
+env_logger = "0.3"
