@@ -1,16 +1,17 @@
-use curl;
 use rustc_serialize;
+use std::io;
 
 #[derive(Debug)]
-enum Error {
+pub enum Error {
+	Simple(&'static str),
 	General(String),
-	CurlError(curl::ffi::err::ErrCode),
+	IOError(io::Error),
 	JsonError(rustc_serialize::json::ParserError)
 }
 
-impl From<curl::ffi::err::ErrCode> for Error {
-    fn from(err: curl::ffi::err::ErrCode) -> Error {
-        Error::CurlError(err)
+impl From<io::Error> for Error {
+    fn from(err: io::Error) -> Error {
+        Error::IOError(err)
     }
 }
 

@@ -1,0 +1,9 @@
+build_targets=<?xml version\="1.0" encoding\="UTF-8" standalone\="no"?>\n<build_targets xmlns\="com.github.rustdt.ide.core">\n<target config\="crate\#no-tests" enabled\="true"/>\n<target config\="crate\#tests" enabled\="true" options\="test -- --nocapture"/>\n</build_targets>\n
+eclipse.preferences.version=1
+format_onSave=false
+racer_path=/usr/bin/racer
+rainicorn_path=/home/gray/.cargo/RustDT/bin/parse_describe
+rustfmt_path=/home/gray/.cargo/RustDT/bin/rustfmt
+sdk_path=/usr
+sdk_src_path=/home/gray/opt/rustc-1.4.0/src
+toolchain_prefs.use_project_settings=false
