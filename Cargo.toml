@@ -1,6 +1,6 @@
 [package]
 name = "imhonet_export"
-version = "0.0.1"
+version = "0.0.2"
 authors = [ "Sergei Smirnov <ggrraay@gmail.com" ]
 
 [dependencies]
@@ -8,5 +8,4 @@ hyper = "0.9"
 rustc-serialize = "0.3"
 log = "0.3"
 env_logger = "0.3"
-sxd-xpath = { git = "https://github.com/shepmaster/sxd-xpath.git" }
-sxd-document = "0.2"
+libxml = "0.0.4"

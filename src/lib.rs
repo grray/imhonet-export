@@ -1,8 +1,7 @@
 #[macro_use] extern crate log;
 #[macro_use] extern crate hyper;
 extern crate rustc_serialize;
-extern crate sxd_xpath;
-extern crate sxd_document;
+extern crate libxml;
 
 
 pub mod errors;
@@ -53,10 +52,6 @@ pub struct Rate {
 	pub item: Item
 }
 
-use std::io::Read;
-use hyper::header::{Accept, Referer,  qitem};
-use hyper::mime::{Mime, TopLevel, SubLevel, Attr, Value};
-
 /// returns Rates vector for given imhonet username
 pub fn get_user_rates(user: &str) -> Vec<Rate> {
     let mut rates = Vec::new();
@@ -66,19 +61,19 @@ pub fn get_user_rates(user: &str) -> Vec<Rate> {
 	loop {
 	    let xhr = load_imhonet_xhr(&current_page).unwrap();
 	    match json::Json::from_str(&xhr) {
+	    	Err(error) => warn!("Got invalid json: {:?}\nJson: {}", error, &xhr), 
 	    	Ok(json) => {
 			    match parse_rates(&json) {
+			    	Err(error) => warn!("Error getting rates: {:?}", error),
 			    	Ok((new_rates, next_page)) => {
 			    		rates.extend(new_rates.into_iter());
 			    		match next_page {
-			    			Some(url) => break,//current_page = url.to_owned(),
+			    			Some(url) => current_page = url.to_owned(),
 			    			None => break,
 			    		}
 			    	}, 
-			    	Err(error) => warn!("Error getting rates: {:?}", error),
 			    }
 	    	}
-	    	Err(error) => warn!("Got invalid json: {:?}\nJson: {}", error, &xhr), 
 	    };
 	}
     
@@ -93,6 +88,7 @@ pub fn get_user_rates(user: &str) -> Vec<Rate> {
     return rates;
 }
 
+use std::collections::HashMap;
 /// returns HashMap, key author id, value Author, for given rates vector
 pub fn get_authors_for_rates(rates: &Vec<Rate>) -> AuthorHashMap {
 	let mut authors: AuthorHashMap = HashMap::new();
@@ -112,6 +108,10 @@ pub fn get_authors_for_rates(rates: &Vec<Rate>) -> AuthorHashMap {
 	return authors;
 }
 
+
+use std::io::Read;
+use hyper::header::{Accept, Referer,  qitem};
+use hyper::mime::{Mime, TopLevel, SubLevel};
 fn load_imhonet_page(url: &str, headers: hyper::header::Headers) -> Result<String, Error> {
 	info!("Loading {}", url);
 	
@@ -136,7 +136,7 @@ fn load_imhonet_page(url: &str, headers: hyper::header::Headers) -> Result<Strin
 header! { (XRequestedWith, "X-Requested-With") => [String] }
 fn load_imhonet_xhr(url: &str) -> Result<String, Error> {	
 	let mut headers = hyper::header::Headers::new();
-	headers.set(Accept(vec![qitem(Mime(TopLevel::Application, SubLevel::Json, vec![(Attr::Charset, Value::Utf8)]))]));
+	headers.set(Accept(vec![qitem(Mime(TopLevel::Application, SubLevel::Json, vec![]))]));
 	headers.set(XRequestedWith("XMLHttpRequest".to_owned()));
 	return load_imhonet_page(url, headers);
 }
@@ -179,65 +179,85 @@ fn parse_rates(json: &json::Json) -> Result<(Vec<Rate>, Option<&str>), Error> {
 	return Ok((rates, next_page));
 }  
 
-fn get_package(html: &str) -> Result<sxd_document::Package, (usize, Vec<sxd_document::parser::Error>)> {
-    return sxd_document::parser::parse(html)
+use libxml::parser::Parser;
+use libxml::xpath;
+use libxml::tree::{Node, Document};
+/// returns xpath context and document for given html as &str
+fn parse_html(html: &str) -> Result<(xpath::Context, Document), Error> {
+	let parser = Parser::default();
+  	let doc = try!(parser.parse_string(html));
+	let context = try!(xpath::Context::new(&doc));
+  	Ok((context, doc))
 }
 
-use std::collections::HashMap;
-fn eval_xpath(package: &sxd_document::Package, xpath: &str) -> String {
-	// errors here caused by bad xpath, but it is static, so these unwrap's are fine
-	let expression = sxd_xpath::Factory::new().build(xpath).unwrap().unwrap();
-	let root = package.as_document().root();
-	let mut functions = HashMap::new(); 
-	sxd_xpath::function::register_core_functions(&mut functions);
-	let variables = HashMap::new(); 
-	let namespaces = HashMap::new(); 
-    let context = sxd_xpath::EvaluationContext::new(root, &functions, &variables, &namespaces);
+/// evaluates xpath and returns single Node
+fn eval_xpath(context: &xpath::Context, xpath: &str) -> Option<Node> {
+	// errors here caused by bad xpath, but it is static, so this unwrap is fine
+	let result = context.evaluate(xpath).unwrap();
 	
-    if let sxd_xpath::Value::String(result) = expression.evaluate(&context).unwrap() {
-    	return result.to_owned();
-    } else {
-	    warn!("not a string returned by xpath {}", xpath);
-		return String::new();
-    }
+	let nodes = result.get_nodes_as_vec();
+	
+	if nodes.len() != 1 {
+		warn!("Xpath {} returned {} results instead of 1", xpath, nodes.len());
+	} 
+	
+	return nodes.get(0).cloned();	
 } 
 
+/// evaluates xpath and returns single node content
+fn eval_xpath_get_content(context: &xpath::Context, xpath: &str) -> String {
+	match eval_xpath(context, xpath) {
+		None => String::new(),
+		Some(node) => node.get_content(),
+	}
+}
+
+/// evaluates xpath and returns single node property by given name
+fn eval_xpath_get_property(context: &xpath::Context, xpath: &str, property: &str) -> String {
+	match eval_xpath(context, xpath) {
+		None => String::new(),
+		Some(node) => node.get_property(property).unwrap_or(String::new()),
+	}
+}
+
 fn parse_item(page: &str, item: &mut Item) {
-	let package = get_package(page).unwrap();
-	
-    item.title = eval_xpath(&package, "string(//div[@class='m-elementprimary-txt']/h1)");   
-	
-    item.title_orig = eval_xpath(&package, "string(//div[@class='m-elementprimary-txt']/div[@class='m-elementprimary-language'])");   
-	
-    item.year = eval_xpath(&package, "string(//div[@class='m_row']//span[@class='m_value'])").parse::<u32>().unwrap_or(0);   
-	
-	let author_url = eval_xpath(&package, "string(//div[@class='m_row is-actors']//a[@class='m_value']/@href)");
-	let author_url_trimmed = author_url.trim_right_matches('/');
-	if let Some(pos) = author_url_trimmed.rfind('/') {
-		if let Ok(id) = author_url_trimmed[(pos+1)..].parse::<u64>() {
-			item.author_id = id;
-			return;
-		} 
-	};
-    warn!("can't get id from author url: {}", author_url);
+	match parse_html(page) {
+		Err(error) => warn!("can't parse html: {:?}. Html: {}", error, page),
+		Ok((context, _doc)) => {
+		    item.title = eval_xpath_get_content(&context, "//div[@class='m-elementprimary-txt']/h1//text()");   
+			
+		    item.title_orig = eval_xpath_get_content(&context, "//div[@class='m-elementprimary-txt']/div[@class='m-elementprimary-language']//text()");   
+			
+		    item.year = eval_xpath_get_content(&context, "//div[@class='m_row']//span[@class='m_value']//text()").parse::<u32>().unwrap_or(0);   
+			
+			let author_url = eval_xpath_get_property(&context, "//div[@class='m_row is-actors']//a[@class='m_value']", "href");
+			let author_url_trimmed = author_url.trim_right_matches('/');
+			if let Some(pos) = author_url_trimmed.rfind('/') {
+				if let Ok(id) = author_url_trimmed[(pos+1)..].parse::<u64>() {
+					item.author_id = id;
+					return;
+				} 
+			};
+		    warn!("can't get id from author url: {}", author_url);
+		}
+	}
 }
 
 fn parse_author(page: &str) -> Author {
-	let package = get_package(page).unwrap();
+	let (context, _doc) = parse_html(page).unwrap();
 	
 	Author {
-    	name: eval_xpath(&package, "string(//div[@class='m-elementprimary-txt']/h1)"),   	
-    	name_orig: eval_xpath(&package, "string(//div[@class='m-elementprimary-txt']/div[@class='m-elementprimary-language'])"),
+    	name: eval_xpath_get_content(&context, "//div[@class='m-elementprimary-txt']/h1/text()"),   	
+    	name_orig: eval_xpath_get_content(&context, "//div[@class='m-elementprimary-txt']/div[@class='m-elementprimary-language']/text()"),
 	}   	
 }
-
-
 
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use super::{parse_rates, parse_item, parse_author};  
+    use super::{parse_html, eval_xpath_get_content, eval_xpath_get_property};  
 	extern crate env_logger;
 	
 	use std::sync::{Once, ONCE_INIT};
@@ -257,14 +277,6 @@ mod tests {
     	let json_str = r#"
 {
 	"user_rates":{
-		"layout":[
-			{
-				"title":"Книги",
-				"url":"http://grray.imhonet.ru/content/books/rates/",
-				"count":"128",
-				"code":"books"
-			}
-		],
 		"content_rated":[
 			{
 				"object_id":19133,
@@ -308,9 +320,19 @@ mod tests {
     }
     
     #[test]
+    fn eval_xpath() {
+		let (context, _doc) = parse_html("<html><div class='foo'>bar</div></html>").unwrap();
+		
+		assert_eq!(eval_xpath_get_content(&context, "//div[@class='foo']//text()"), "bar");   	
+		assert_eq!(eval_xpath_get_property(&context, "//div", "class"), "foo");   	
+    }
+    
+    
+    #[test]
     fn parse_item_updates_orig() {
     	setup();
 		let html = r#"
+			<!DOCTYPE html>
 			<html>
 				<div class="m-elementprimary-txt">
 	            	<h1 class="m-elementprimary-title">Стража! Стража!</h1>
