@@ -8,4 +8,7 @@ hyper = "0.9"
 rustc-serialize = "0.3"
 log = "0.3"
 env_logger = "0.3"
-libxml = "0.0.4"
+#libxml = "0.0.4"
+libxml = { git = "https://github.com/grray/rust-libxml.git", branch = "suppress_warnings" }
+csv = "0.14"
+chrono = "0.2"
